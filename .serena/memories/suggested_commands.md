@@ -1,0 +1,5 @@
+- 開発サーバ: `pnpm dev`
+- 本番ビルド: `pnpm build`
+- 本番サーバ起動: `pnpm start`
+- Lint: `pnpm lint`（Biome）
+- フォーマット: `pnpm format`（Biome --write）

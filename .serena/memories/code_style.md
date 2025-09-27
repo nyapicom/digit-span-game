@@ -1,0 +1,5 @@
+- TypeScript は `strict` で、関数コンポーネントとローカルな `type` 定義を併用。`as const` でリテラル型を維持。
+- React は関数コンポーネント中心で hooks を活用（`useState/useEffect/useMemo/useRef`）。クライアントコンポーネントは "use client" 宣言。
+- Tailwind CSS のユーティリティクラスでスタイリング。色は `slate`・`sky`・`emerald`・`rose` 系が多い。
+- フォーマッタ／リンタは Biome。インデント 2 スペース、LF、`organizeImports` 有効。
+- `app/layout.tsx` では `lang="ja"` を設定し、日本語 UI テキストを基本とする。

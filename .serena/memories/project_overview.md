@@ -1,0 +1,5 @@
+- Webブラウザ向けの逆順復唱（逆順タイピング）ゲーム。短期記憶トレーニングを目的に、表示される数字を逆順入力する。
+- Next.js 15（app router）と React 19、TypeScript を使用。Tailwind CSS 4 系と PostCSS を採用。
+- 状態管理はコンポーネント内の React hooks（useState/useEffect/useMemo/useRef）で完結。
+- ルートは `app/` ディレクトリのみ。`app/page.tsx` に UI・ゲームロジック、`app/layout.tsx` にメタデータと全体レイアウト、`app/globals.css` に Tailwind のエントリがある。
+- 設定ファイルは `tsconfig.json`（strict）、`tailwind.config.ts`、`biome.json`、`next.config.ts` など。
