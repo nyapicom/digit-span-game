@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "逆順復唱ゲーム",
+  title: "数字復唱ゲーム",
   description: "Reverse order memory typing game to train short-term memory"
 };
 

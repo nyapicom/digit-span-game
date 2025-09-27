@@ -126,14 +126,14 @@ export default function Home() {
     hasHydratedInitialLength.current = true;
   }, []);
 
-  useEffect(() => {
+  const writeLengthCookie = useCallback((length: number) => {
     if (!hasHydratedInitialLength.current || typeof document === "undefined") {
       return;
     }
 
     const maxAgeSeconds = 60 * 60 * 24 * 365;
-    document.cookie = `${INITIAL_LENGTH_COOKIE}=${initialLength}; max-age=${maxAgeSeconds}; path=/`;
-  }, [initialLength]);
+    document.cookie = `${INITIAL_LENGTH_COOKIE}=${length}; max-age=${maxAgeSeconds}; path=/`;
+  }, []);
 
   useEffect(() => {
     return () => {
@@ -175,8 +175,9 @@ export default function Home() {
       setRound(nextRound);
       setHp(nextHp);
       setPhase("memorize");
+      writeLengthCookie(nextLength);
     },
-    []
+    [writeLengthCookie]
   );
 
   useEffect(() => {
@@ -322,6 +323,7 @@ export default function Home() {
       autoAdvanceTimer.current = null;
     }
 
+    const lastLength = currentLength;
     setPhase("title");
     setSequence([]);
     setVisibleDigit(null);
@@ -330,8 +332,10 @@ export default function Home() {
     setHp(0);
     setRound(1);
     setSuccessStreak(0);
-    setCurrentLength(initialLength);
+    setInitialLength(lastLength);
+    setCurrentLength(lastLength);
     setRevealMs(BASE_REVEAL_MS);
+    writeLengthCookie(lastLength);
   };
 
   const modeLabel = mode === "reverse" ? "逆唱" : "順唱";
@@ -538,4 +542,3 @@ export default function Home() {
     </main>
   );
 }
-
