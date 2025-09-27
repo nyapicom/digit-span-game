@@ -17,8 +17,22 @@ const DIGIT_TONE_FREQUENCY = 880;
 const DIGIT_TONE_PEAK = 0.2;
 const INITIAL_LENGTH_COOKIE = "digit-span-initial-length";
 
+const MODE_OPTIONS = [
+  {
+    id: "reverse",
+    label: "逆唱",
+    description: "覚えた数字を逆順に入力するモード"
+  },
+  {
+    id: "forward",
+    label: "順唱",
+    description: "表示された順番のまま入力するモード"
+  }
+] as const;
+
 type Phase = "title" | "memorize" | "input" | "result" | "gameover";
 type RoundResult = "success" | "fail" | null;
+type Mode = (typeof MODE_OPTIONS)[number]["id"];
 
 const clampInitialLength = (value: number) =>
   Math.min(MAX_INITIAL_LENGTH, Math.max(MIN_INITIAL_LENGTH, value));
@@ -43,6 +57,7 @@ export default function Home() {
   const [result, setResult] = useState<RoundResult>(null);
   const [revealMs, setRevealMs] = useState(BASE_REVEAL_MS);
   const [successStreak, setSuccessStreak] = useState(0);
+  const [mode, setMode] = useState<Mode>("reverse");
 
   const timers = useRef<NodeJS.Timeout[]>([]);
   const autoAdvanceTimer = useRef<NodeJS.Timeout | null>(null);
@@ -226,7 +241,7 @@ export default function Home() {
         });
       } else if (result === "fail" && hp > 0) {
         const nextRound = round + 1;
-        const loweredLength = Math.max(1, currentLength - 1);
+        const loweredLength = Math.max(MIN_INITIAL_LENGTH, currentLength - 1);
         setSuccessStreak(0);
         beginRound({
           nextLength: loweredLength,
@@ -248,6 +263,9 @@ export default function Home() {
     () => sequence.slice().reverse().join(""),
     [sequence]
   );
+
+  const forwardAnswer = useMemo(() => sequence.join(""), [sequence]);
+  const expectedAnswer = mode === "reverse" ? reversedAnswer : forwardAnswer;
 
   const handleInitialLengthChange = (value: number) => {
     const clamped = clampInitialLength(value);
@@ -277,7 +295,7 @@ export default function Home() {
       return;
     }
 
-    if (input === reversedAnswer) {
+    if (input === expectedAnswer) {
       setResult("success");
       setPhase("result");
     } else {
@@ -316,42 +334,80 @@ export default function Home() {
     setRevealMs(BASE_REVEAL_MS);
   };
 
+  const modeLabel = mode === "reverse" ? "逆唱" : "順唱";
+  const modeInstruction =
+    mode === "reverse"
+      ? "覚えた数字を逆順に入力してください（連続成功で桁数が増えます）"
+      : "表示された順番のまま入力してください（連続成功で桁数が増えます）";
+  const answerLabel = mode === "reverse" ? "逆順の正解" : "順番の正解";
+
   return (
     <main className="mx-auto flex min-h-screen max-w-2xl flex-col gap-8 px-6 py-12">
       <header className="space-y-2 text-center">
-        <h1 className="text-3xl font-bold text-sky-300 sm:text-4xl">逆順復唱ゲーム</h1>
+        <h1 className="text-3xl font-bold text-sky-300 sm:text-4xl">順唱・逆唱 記憶ゲーム</h1>
         <p className="text-sm text-slate-400 sm:text-base">
-          表示された数字を覚えて、逆順に入力しよう。HPが0になる前にできるだけ多くのラウンドを突破しよう。
+          表示された数字を覚えて、選んだモードに合わせて入力しよう。HPが0になる前にできるだけ多くのラウンドを突破しよう。
         </p>
       </header>
 
       {phase === "title" && (
         <section className="space-y-6 rounded-xl border border-slate-800 bg-slate-900/60 p-6 sm:p-8">
           <div className="space-y-2 text-center">
-            <h2 className="text-lg font-semibold text-slate-200">初期難易度を設定</h2>
+            <h2 className="text-lg font-semibold text-slate-200">初期設定</h2>
             <p className="text-sm text-slate-400">
-              最初に表示される数字の個数をスライドバーで選べます。設定はブラウザに保存されます。
+              初期桁数とモードを選択してからゲームを開始できます。設定の一部はブラウザに保存されます。
             </p>
           </div>
-          <div className="flex flex-col items-center gap-4">
-            <input
-              className="w-full accent-sky-400"
-              type="range"
-              min={MIN_INITIAL_LENGTH}
-              max={MAX_INITIAL_LENGTH}
-              value={initialLength}
-              onChange={(event) =>
-                handleInitialLengthChange(Number.parseInt(event.target.value, 10))
-              }
-            />
-            <div className="text-sm text-slate-300">
-              初期桁数:{" "}
-              <span className="text-xl font-semibold text-sky-300">{initialLength}</span>
+
+          <div className="space-y-4">
+            <div className="flex flex-col items-center gap-4">
+              <label className="text-sm text-slate-400" htmlFor="initial-length">初期桁数</label>
+              <input
+                id="initial-length"
+                className="w-full accent-sky-400"
+                type="range"
+                min={MIN_INITIAL_LENGTH}
+                max={MAX_INITIAL_LENGTH}
+                value={initialLength}
+                onChange={(event) =>
+                  handleInitialLengthChange(Number.parseInt(event.target.value, 10))
+                }
+              />
+              <div className="text-sm text-slate-300">
+                選択中: <span className="text-xl font-semibold text-sky-300">{initialLength}</span> 桁
+              </div>
+            </div>
+
+            <div className="space-y-3">
+              <div className="text-sm text-slate-400">入力モード</div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                {MODE_OPTIONS.map((option) => {
+                  const isActive = mode === option.id;
+                  return (
+                    <button
+                      key={option.id}
+                      className={`rounded-lg border p-4 text-left transition ${
+                        isActive
+                          ? "border-sky-400 bg-sky-500/20"
+                          : "border-slate-700 bg-slate-900 hover:border-sky-500/70 hover:bg-slate-800"
+                      }`}
+                      onClick={() => setMode(option.id)}
+                      type="button"
+                      aria-pressed={isActive}
+                    >
+                      <div className="text-lg font-semibold text-slate-100">{option.label}</div>
+                      <p className="mt-2 text-sm text-slate-300">{option.description}</p>
+                    </button>
+                  );
+                })}
+              </div>
             </div>
           </div>
+
           <button
             className="w-full rounded-md bg-sky-500 px-4 py-3 text-sm font-semibold text-slate-950 transition hover:bg-sky-400"
             onClick={startGame}
+            type="button"
           >
             ゲームスタート
           </button>
@@ -368,6 +424,10 @@ export default function Home() {
             <div>
               <div className="text-xs uppercase tracking-wide text-slate-500">ラウンド</div>
               <div className="text-lg font-semibold text-slate-200">{round}</div>
+            </div>
+            <div>
+              <div className="text-xs uppercase tracking-wide text-slate-500">モード</div>
+              <div className="text-lg font-semibold text-slate-200">{modeLabel}</div>
             </div>
             <div>
               <div className="text-xs uppercase tracking-wide text-slate-500">HP</div>
@@ -397,9 +457,7 @@ export default function Home() {
 
           {phase === "input" && (
             <div className="flex flex-col items-center gap-6 rounded-xl border border-emerald-500/40 bg-emerald-500/10 p-8">
-              <p className="text-sm text-emerald-200">
-                覚えた数字を逆順に入力してください（連続成功で桁数が増えます）
-              </p>
+              <p className="text-sm text-emerald-200">{modeInstruction}</p>
               <div className="text-xl text-slate-200">
                 入力桁数: {userInput.length} / {sequence.length}
               </div>
@@ -431,11 +489,9 @@ export default function Home() {
             <div className="flex flex-col items-center gap-4 rounded-xl border border-rose-500/40 bg-rose-500/10 p-8 text-center">
               <h3 className="text-2xl font-bold text-rose-300">失敗...</h3>
               <p className="text-sm text-rose-200">
-                正解は <span className="font-mono text-base text-rose-100">{reversedAnswer}</span> でした。
+                正解は <span className="font-mono text-base text-rose-100">{expectedAnswer}</span> でした。
               </p>
-              <p className="text-xs text-rose-200">
-                難易度を1段下げて再挑戦します。
-              </p>
+              <p className="text-xs text-rose-200">難易度を1段下げて再挑戦します。</p>
             </div>
           )}
 
@@ -443,7 +499,7 @@ export default function Home() {
             <div className="flex flex-col items-center gap-5 rounded-xl border border-rose-500/40 bg-rose-500/10 p-10 text-center">
               <h3 className="text-3xl font-bold text-rose-300">ゲームオーバー</h3>
               <p className="text-sm text-rose-200">
-                正解は <span className="font-mono text-base text-rose-100">{reversedAnswer}</span> でした。
+                正解は <span className="font-mono text-base text-rose-100">{expectedAnswer}</span> でした。
               </p>
               <p className="text-xs uppercase tracking-wide text-rose-200">
                 到達ラウンド {round}
@@ -451,6 +507,7 @@ export default function Home() {
               <button
                 className="rounded-full bg-slate-100 px-6 py-2 text-sm font-semibold text-slate-900 transition hover:bg-slate-200"
                 onClick={handleRestart}
+                type="button"
               >
                 タイトルに戻る
               </button>
@@ -464,7 +521,7 @@ export default function Home() {
                 {sequence.join(" ")}
               </div>
               <div className="mt-2 text-xs text-slate-400">
-                逆順の正解: <span className="font-mono text-sm text-emerald-200">{reversedAnswer}</span>
+                {answerLabel}: <span className="font-mono text-sm text-emerald-200">{expectedAnswer}</span>
               </div>
             </div>
           )}
@@ -472,6 +529,7 @@ export default function Home() {
           <button
             className="self-start text-xs text-slate-500 underline hover:text-slate-300"
             onClick={handleRestart}
+            type="button"
           >
             タイトルに戻る
           </button>
