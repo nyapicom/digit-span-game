@@ -2,71 +2,52 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-const DIFFICULTIES = [
-  {
-    id: "easy",
-    label: "やさしい",
-    description: "数字3個から開始、HP 5",
-    startingLength: 3,
-    startingHp: 5,
-    initialRevealMs: 900
-  },
-  {
-    id: "normal",
-    label: "ふつう",
-    description: "数字4個から開始、HP 4",
-    startingLength: 4,
-    startingHp: 4,
-    initialRevealMs: 750
-  },
-  {
-    id: "hard",
-    label: "むずかしい",
-    description: "数字5個から開始、HP 3",
-    startingLength: 5,
-    startingHp: 3,
-    initialRevealMs: 650
-  }
-] as const;
-
+const DEFAULT_INITIAL_LENGTH = 3;
+const MIN_INITIAL_LENGTH = 2;
+const MAX_INITIAL_LENGTH = 9;
+const MAX_HP = 3;
+const SUCCESS_STREAK_FOR_LEVEL_UP = 2;
 const AUTO_ADVANCE_DELAY_SUCCESS = 1600;
 const AUTO_ADVANCE_DELAY_FAIL = 2000;
-const EASE_REVEAL_BONUS_MS = 120;
+const BASE_REVEAL_MS = 900;
+const REVEAL_STEP_MS = 40;
+const MIN_REVEAL_MS = 380;
 const DIGIT_TONE_DURATION = 0.2;
 const DIGIT_TONE_FREQUENCY = 880;
 const DIGIT_TONE_PEAK = 0.2;
-
-type Difficulty = (typeof DIFFICULTIES)[number];
+const INITIAL_LENGTH_COOKIE = "digit-span-initial-length";
 
 type Phase = "title" | "memorize" | "input" | "result" | "gameover";
 type RoundResult = "success" | "fail" | null;
 
-function pickRandomSequence(length: number): number[] {
-  return Array.from({ length }, () => Math.floor(Math.random() * 10));
-}
+const clampInitialLength = (value: number) =>
+  Math.min(MAX_INITIAL_LENGTH, Math.max(MIN_INITIAL_LENGTH, value));
 
-function clampRevealDuration(base: number, round: number) {
-  const minRevealMs = 380;
-  const step = 40;
-  const reduced = base - (round - 1) * step;
-  return Math.max(minRevealMs, reduced);
-}
+const calculateRevealDuration = (round: number) => {
+  const reduced = BASE_REVEAL_MS - (round - 1) * REVEAL_STEP_MS;
+  return Math.max(MIN_REVEAL_MS, reduced);
+};
+
+const pickRandomSequence = (length: number) =>
+  Array.from({ length }, () => Math.floor(Math.random() * 10));
 
 export default function Home() {
   const [phase, setPhase] = useState<Phase>("title");
-  const [difficulty, setDifficulty] = useState<Difficulty | null>(null);
+  const [initialLength, setInitialLength] = useState(DEFAULT_INITIAL_LENGTH);
+  const [currentLength, setCurrentLength] = useState(DEFAULT_INITIAL_LENGTH);
   const [round, setRound] = useState(1);
   const [sequence, setSequence] = useState<number[]>([]);
   const [visibleDigit, setVisibleDigit] = useState<number | null>(null);
   const [hp, setHp] = useState(0);
-  const [maxHp, setMaxHp] = useState(0);
   const [userInput, setUserInput] = useState("");
   const [result, setResult] = useState<RoundResult>(null);
-  const [revealMs, setRevealMs] = useState(900);
-  const [isEasedRound, setIsEasedRound] = useState(false);
+  const [revealMs, setRevealMs] = useState(BASE_REVEAL_MS);
+  const [successStreak, setSuccessStreak] = useState(0);
+
   const timers = useRef<NodeJS.Timeout[]>([]);
   const autoAdvanceTimer = useRef<NodeJS.Timeout | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
+  const hasHydratedInitialLength = useRef(false);
 
   const ensureAudioContext = useCallback(() => {
     if (typeof window === "undefined") {
@@ -112,6 +93,34 @@ export default function Home() {
   }, [ensureAudioContext]);
 
   useEffect(() => {
+    if (typeof document === "undefined") {
+      return;
+    }
+
+    const match = document.cookie.match(
+      new RegExp(`${INITIAL_LENGTH_COOKIE}=([^;]+)`)
+    );
+    if (match) {
+      const parsed = Number.parseInt(match[1], 10);
+      if (!Number.isNaN(parsed)) {
+        const clamped = clampInitialLength(parsed);
+        setInitialLength(clamped);
+        setCurrentLength(clamped);
+      }
+    }
+    hasHydratedInitialLength.current = true;
+  }, []);
+
+  useEffect(() => {
+    if (!hasHydratedInitialLength.current || typeof document === "undefined") {
+      return;
+    }
+
+    const maxAgeSeconds = 60 * 60 * 24 * 365;
+    document.cookie = `${INITIAL_LENGTH_COOKIE}=${initialLength}; max-age=${maxAgeSeconds}; path=/`;
+  }, [initialLength]);
+
+  useEffect(() => {
     return () => {
       timers.current.forEach(clearTimeout);
       if (autoAdvanceTimer.current) {
@@ -124,14 +133,40 @@ export default function Home() {
     };
   }, []);
 
+  const beginRound = useCallback(
+    ({
+      nextLength,
+      nextHp,
+      nextRound
+    }: {
+      nextLength: number;
+      nextHp: number;
+      nextRound: number;
+    }) => {
+      if (autoAdvanceTimer.current) {
+        clearTimeout(autoAdvanceTimer.current);
+        autoAdvanceTimer.current = null;
+      }
+
+      timers.current.forEach(clearTimeout);
+      timers.current = [];
+
+      setSequence(pickRandomSequence(nextLength));
+      setUserInput("");
+      setResult(null);
+      setVisibleDigit(null);
+      setRevealMs(calculateRevealDuration(nextRound));
+      setCurrentLength(nextLength);
+      setRound(nextRound);
+      setHp(nextHp);
+      setPhase("memorize");
+    },
+    []
+  );
+
   useEffect(() => {
     if (phase !== "memorize" || sequence.length === 0) {
       return;
-    }
-
-    if (autoAdvanceTimer.current) {
-      clearTimeout(autoAdvanceTimer.current);
-      autoAdvanceTimer.current = null;
     }
 
     timers.current.forEach(clearTimeout);
@@ -142,6 +177,7 @@ export default function Home() {
       const timer = setTimeout(() => {
         setVisibleDigit(digit);
         playDigitCue();
+
         if (index === sequence.length - 1) {
           const switchTimer = setTimeout(() => {
             setVisibleDigit(null);
@@ -152,18 +188,19 @@ export default function Home() {
       }, revealMs * index);
       timers.current.push(timer);
     });
+
+    return () => {
+      timers.current.forEach(clearTimeout);
+      timers.current = [];
+    };
   }, [phase, revealMs, sequence, playDigitCue]);
 
   useEffect(() => {
-    if (phase !== "result" || !difficulty || result === null) {
+    if (phase !== "result" || result === null) {
       if (autoAdvanceTimer.current) {
         clearTimeout(autoAdvanceTimer.current);
         autoAdvanceTimer.current = null;
       }
-      return;
-    }
-
-    if (result === "fail" && hp <= 0) {
       return;
     }
 
@@ -175,15 +212,27 @@ export default function Home() {
       result === "success" ? AUTO_ADVANCE_DELAY_SUCCESS : AUTO_ADVANCE_DELAY_FAIL;
 
     autoAdvanceTimer.current = setTimeout(() => {
-      if (!difficulty) {
-        return;
-      }
-
       if (result === "success") {
-        const nextRound = isEasedRound ? round : round + 1;
-        beginRound(difficulty, nextRound, hp);
+        const nextRound = round + 1;
+        const nextStreak = successStreak + 1;
+        const shouldLevelUp = nextStreak >= SUCCESS_STREAK_FOR_LEVEL_UP;
+        const nextLength = shouldLevelUp ? currentLength + 1 : currentLength;
+
+        setSuccessStreak(shouldLevelUp ? 0 : nextStreak);
+        beginRound({
+          nextLength,
+          nextHp: hp,
+          nextRound
+        });
       } else if (result === "fail" && hp > 0) {
-        beginRound(difficulty, round, hp, { ease: true });
+        const nextRound = round + 1;
+        const loweredLength = Math.max(1, currentLength - 1);
+        setSuccessStreak(0);
+        beginRound({
+          nextLength: loweredLength,
+          nextHp: hp,
+          nextRound
+        });
       }
     }, delay);
 
@@ -193,64 +242,38 @@ export default function Home() {
         autoAdvanceTimer.current = null;
       }
     };
-  }, [phase, result, difficulty, round, hp, isEasedRound]);
+  }, [phase, result, hp, round, currentLength, successStreak, beginRound]);
 
   const reversedAnswer = useMemo(
     () => sequence.slice().reverse().join(""),
     [sequence]
   );
 
-  const startGame = (selected: Difficulty) => {
-    setDifficulty(selected);
-    setHp(selected.startingHp);
-    setMaxHp(selected.startingHp);
-    setRound(1);
-    setRevealMs(selected.initialRevealMs);
-    setResult(null);
-    void ensureAudioContext();
-    beginRound(selected, 1, selected.startingHp);
+  const handleInitialLengthChange = (value: number) => {
+    const clamped = clampInitialLength(value);
+    setInitialLength(clamped);
+    if (phase === "title") {
+      setCurrentLength(clamped);
+    }
   };
 
-  const beginRound = (
-    selectedDifficulty: Difficulty,
-    nextRound: number,
-    nextHp: number,
-    options?: { ease?: boolean }
-  ) => {
-    if (autoAdvanceTimer.current) {
-      clearTimeout(autoAdvanceTimer.current);
-      autoAdvanceTimer.current = null;
-    }
-
-    const baseLength = selectedDifficulty.startingLength + nextRound - 1;
-    const length = options?.ease
-      ? Math.max(selectedDifficulty.startingLength, baseLength - 1)
-      : baseLength;
-
-    const baseReveal = clampRevealDuration(
-      selectedDifficulty.initialRevealMs,
-      nextRound
-    );
-    const revealDuration = options?.ease
-      ? Math.min(
-          selectedDifficulty.initialRevealMs,
-          baseReveal + EASE_REVEAL_BONUS_MS
-        )
-      : baseReveal;
-
-    setSequence(pickRandomSequence(length));
-    setUserInput("");
+  const startGame = () => {
+    const startLength = clampInitialLength(initialLength);
+    setSuccessStreak(0);
+    setRound(1);
     setResult(null);
-    setVisibleDigit(null);
-    setRevealMs(revealDuration);
-    setRound(nextRound);
-    setHp(nextHp);
-    setIsEasedRound(Boolean(options?.ease));
-    setPhase("memorize");
+    setUserInput("");
+    setHp(MAX_HP);
+    void ensureAudioContext();
+    beginRound({
+      nextLength: startLength,
+      nextHp: MAX_HP,
+      nextRound: 1
+    });
   };
 
   const evaluateAnswer = (input: string) => {
-    if (phase !== "input" || !difficulty) {
+    if (phase !== "input") {
       return;
     }
 
@@ -274,21 +297,23 @@ export default function Home() {
   };
 
   const handleRestart = () => {
+    timers.current.forEach(clearTimeout);
+    timers.current = [];
     if (autoAdvanceTimer.current) {
       clearTimeout(autoAdvanceTimer.current);
       autoAdvanceTimer.current = null;
     }
 
     setPhase("title");
-    setDifficulty(null);
     setSequence([]);
     setVisibleDigit(null);
     setUserInput("");
     setResult(null);
     setHp(0);
-    setMaxHp(0);
     setRound(1);
-    setIsEasedRound(false);
+    setSuccessStreak(0);
+    setCurrentLength(initialLength);
+    setRevealMs(BASE_REVEAL_MS);
   };
 
   return (
@@ -296,36 +321,49 @@ export default function Home() {
       <header className="space-y-2 text-center">
         <h1 className="text-3xl font-bold text-sky-300 sm:text-4xl">逆順復唱ゲーム</h1>
         <p className="text-sm text-slate-400 sm:text-base">
-          表示された数字を覚えて、逆順に入力しよう。HPが0になる前に何ラウンド突破できるかな？
+          表示された数字を覚えて、逆順に入力しよう。HPが0になる前にできるだけ多くのラウンドを突破しよう。
         </p>
       </header>
 
       {phase === "title" && (
-        <section className="space-y-6">
-          <h2 className="text-center text-lg font-semibold text-slate-200">
-            難易度を選択
-          </h2>
-          <div className="grid gap-4 sm:grid-cols-3">
-            {DIFFICULTIES.map((option) => (
-              <button
-                key={option.id}
-                className="rounded-lg border border-slate-700 bg-slate-900 p-4 text-left transition hover:border-sky-400 hover:bg-slate-800"
-                onClick={() => startGame(option)}
-              >
-                <div className="text-xl font-bold text-sky-300">{option.label}</div>
-                <p className="mt-2 text-sm text-slate-300">{option.description}</p>
-              </button>
-            ))}
+        <section className="space-y-6 rounded-xl border border-slate-800 bg-slate-900/60 p-6 sm:p-8">
+          <div className="space-y-2 text-center">
+            <h2 className="text-lg font-semibold text-slate-200">初期難易度を設定</h2>
+            <p className="text-sm text-slate-400">
+              最初に表示される数字の個数をスライドバーで選べます。設定はブラウザに保存されます。
+            </p>
           </div>
+          <div className="flex flex-col items-center gap-4">
+            <input
+              className="w-full accent-sky-400"
+              type="range"
+              min={MIN_INITIAL_LENGTH}
+              max={MAX_INITIAL_LENGTH}
+              value={initialLength}
+              onChange={(event) =>
+                handleInitialLengthChange(Number.parseInt(event.target.value, 10))
+              }
+            />
+            <div className="text-sm text-slate-300">
+              初期桁数:{" "}
+              <span className="text-xl font-semibold text-sky-300">{initialLength}</span>
+            </div>
+          </div>
+          <button
+            className="w-full rounded-md bg-sky-500 px-4 py-3 text-sm font-semibold text-slate-950 transition hover:bg-sky-400"
+            onClick={startGame}
+          >
+            ゲームスタート
+          </button>
         </section>
       )}
 
-      {phase !== "title" && difficulty && (
+      {phase !== "title" && (
         <section className="flex flex-col gap-6">
           <div className="flex flex-wrap items-center justify-between gap-4 rounded-lg border border-slate-800 bg-slate-900/70 p-4">
             <div>
-              <div className="text-xs uppercase tracking-wide text-slate-500">難易度</div>
-              <div className="text-lg font-semibold text-slate-200">{difficulty.label}</div>
+              <div className="text-xs uppercase tracking-wide text-slate-500">現在の桁数</div>
+              <div className="text-lg font-semibold text-slate-200">{currentLength}</div>
             </div>
             <div>
               <div className="text-xs uppercase tracking-wide text-slate-500">ラウンド</div>
@@ -338,7 +376,7 @@ export default function Home() {
                 <div className="h-2 w-32 overflow-hidden rounded-full bg-slate-800">
                   <div
                     className="h-full bg-gradient-to-r from-sky-500 to-cyan-400 transition-all"
-                    style={{ width: `${(hp / maxHp) * 100}%` }}
+                    style={{ width: `${(hp / MAX_HP) * 100}%` }}
                   />
                 </div>
               </div>
@@ -360,7 +398,7 @@ export default function Home() {
           {phase === "input" && (
             <div className="flex flex-col items-center gap-6 rounded-xl border border-emerald-500/40 bg-emerald-500/10 p-8">
               <p className="text-sm text-emerald-200">
-                覚えた数字を逆順に入力してください
+                覚えた数字を逆順に入力してください（連続成功で桁数が増えます）
               </p>
               <div className="text-xl text-slate-200">
                 入力桁数: {userInput.length} / {sequence.length}
@@ -380,7 +418,9 @@ export default function Home() {
           {phase === "result" && result === "success" && (
             <div className="flex flex-col items-center gap-4 rounded-xl border border-emerald-500/40 bg-emerald-500/10 p-8 text-center">
               <h3 className="text-2xl font-bold text-emerald-300">成功！</h3>
-              <p className="text-sm text-emerald-200">次はさらに長い数字に挑戦しよう。</p>
+              <p className="text-sm text-emerald-200">
+                連続成功で次のラウンドの桁数が1つ増えます。
+              </p>
               <p className="text-xs text-emerald-100">
                 少し待つと次のチャレンジへ自動で移行します。
               </p>
@@ -394,7 +434,7 @@ export default function Home() {
                 正解は <span className="font-mono text-base text-rose-100">{reversedAnswer}</span> でした。
               </p>
               <p className="text-xs text-rose-200">
-                難易度を少し緩めて自動で再挑戦します。
+                難易度を1段下げて再挑戦します。
               </p>
             </div>
           )}
@@ -440,3 +480,4 @@ export default function Home() {
     </main>
   );
 }
+
